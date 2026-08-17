@@ -1,4 +1,6 @@
 ```
+禁用com.oculus.updater
+
 adb reboot bootloader
 
 sideload update
