@@ -1,8 +1,33 @@
+```
 adb reboot bootloader
+
 sideload update
+
 adb sideload "I:\models\q3_52168470043600520.zip"
+
 使用ionstack.conf.example到ionstack.conf
+
 root成功
+```
+
+```
+adb shell getprop | grep -E "ro.build.version|ro.product.model"
+[ro.build.version.all_codenames]: [REL]
+[ro.build.version.base_os]: []
+[ro.build.version.codename]: [REL]
+[ro.build.version.incremental]: [52168470043600520]
+[ro.build.version.known_codenames]: [Base,Base11,Cupcake,Donut,Eclair,Eclair01,EclairMr1,Froyo,Gingerbread,GingerbreadMr1,Honeycomb,HoneycombMr1,HoneycombMr2,IceCreamSandwich,IceCreamSandwichMr1,JellyBean,JellyBeanMr1,JellyBeanMr2,Kitkat,KitkatWatch,Lollipop,LollipopMr1,M,N,NMr1,O,OMr1,P,Q,R,S,Sv2,Tiramisu,UpsideDownCake,VanillaIceCream]
+[ro.build.version.min_supported_target_sdk]: [28]
+[ro.build.version.preview_sdk]: [0]
+[ro.build.version.preview_sdk_fingerprint]: [REL]
+[ro.build.version.release]: [14]
+[ro.build.version.release_or_codename]: [14]
+[ro.build.version.release_or_preview_display]: [14]
+[ro.build.version.sdk]: [34]
+[ro.build.version.security_patch]: [2026-05-01]
+[ro.product.model]: [Quest 3]
+[ro.product.model_for_attestation]: []
+```
 
 # IonStack exploit for Meta Quest 3
 
