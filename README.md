@@ -1,3 +1,9 @@
+adb reboot bootloader
+sideload update
+adb sideload "I:\models\q3_52168470043600520.zip"
+使用ionstack.conf.example到ionstack.conf
+root成功
+
 # IonStack exploit for Meta Quest 3
 
 Root exploit for Meta Quest 3, adapted from IonStack (CVE-2026-43499) in [CyberMeowfia](https://github.com/NebuSec/CyberMeowfia).
