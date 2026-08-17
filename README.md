@@ -28,9 +28,7 @@ adb shell getprop | grep -E "ro.build.version|ro.product.model"
 [ro.product.model]: [Quest 3]
 [ro.product.model_for_attestation]: []
 ```
-```
 <img width="1880" height="1204" alt="image" src="https://github.com/user-attachments/assets/eac746b0-ac51-4ec3-8dcf-ed6f9349d949" />
-```
 # IonStack exploit for Meta Quest 3
 
 Root exploit for Meta Quest 3, adapted from IonStack (CVE-2026-43499) in [CyberMeowfia](https://github.com/NebuSec/CyberMeowfia).
