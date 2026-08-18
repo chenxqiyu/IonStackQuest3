@@ -233,6 +233,40 @@ def patched_recover_kallsyms(data, kernel_size, image_size):
     return info
 
 
+# ============================================================
+# BTF fallback: Linux 6.1 没有 rt_waiter_node 子结构体，
+# prio/deadline 直接在 rt_mutex_waiter 中。
+# 当 btf.field("rt_waiter_node", X) 失败时，自动回退为
+# btf.field("rt_mutex_waiter", X) - btf.field("rt_mutex_waiter", "tree")
+# ============================================================
+_orig_btf_field = gt.BTFInfo.field
+_orig_btf_dfs = gt.BTFInfo.direct_field_size
+
+def _patched_btf_field(self, struct_name, field_name):
+    try:
+        return _orig_btf_field(self, struct_name, field_name)
+    except gt.GenerationError:
+        if struct_name == "rt_waiter_node":
+            base_off = _orig_btf_field(self, "rt_mutex_waiter", "tree")
+            field_off = _orig_btf_field(self, "rt_mutex_waiter", field_name)
+            print(f"  BTF fallback: rt_waiter_node.{field_name} -> "
+                  f"rt_mutex_waiter.{field_name}({field_off}) - tree({base_off}) = {field_off - base_off}",
+                  file=sys.stderr)
+            return field_off - base_off
+        raise
+
+def _patched_btf_dfs(self, struct_name, field_name):
+    try:
+        return _orig_btf_dfs(self, struct_name, field_name)
+    except gt.GenerationError:
+        if struct_name == "rt_waiter_node":
+            return _orig_btf_dfs(self, "rt_mutex_waiter", field_name)
+        raise
+
+gt.BTFInfo.field = _patched_btf_field
+gt.BTFInfo.direct_field_size = _patched_btf_dfs
+
+
 # Patch
 gt.recover_kallsyms = patched_recover_kallsyms
 
