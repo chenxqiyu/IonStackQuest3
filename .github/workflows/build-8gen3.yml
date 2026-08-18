@@ -24,6 +24,10 @@ on:
         description: 'PoC 仓库分支/标签'
         required: false
         default: 'main'
+      patch_url:
+        description: 'generate_target_patched.py 的 URL（适配 Linux 6.1+ kallsyms 布局，留空则用原脚本）'
+        required: false
+        default: ''
       ndk_release:
         description: 'Android NDK 版本 (dl.google.com/android/repository 目录名)'
         required: false
@@ -129,12 +133,19 @@ jobs:
             | grep -E "aarch64-linux-android.*clang$" | head -5
 
       # ============================================================
-      # 生成 target.h
+      # 生成 target.h（支持 Linux 6.1+ kallsyms 新布局补丁）
       # ============================================================
       - name: Generate target.h
         run: |
           export ANDROID_NDK_HOME="${ANDROID_NDK_HOME:-$GITHUB_WORKSPACE/ndk/android-ndk-${{ inputs.ndk_release }}}"
-          python3 generate_target.py \
+          GEN_SCRIPT="generate_target.py"
+          # 如果提供了 patch_url，下载补丁脚本
+          if [ -n "${{ inputs.patch_url }}" ]; then
+            echo "[*] Downloading patched generate_target.py ..."
+            curl -fL --retry 3 -o generate_target_patched.py "${{ inputs.patch_url }}"
+            GEN_SCRIPT="generate_target_patched.py"
+          fi
+          python3 "$GEN_SCRIPT" \
             --boot boot.img \
             --profile profile.json \
             -o source/src/target.h \
