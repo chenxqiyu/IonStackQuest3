@@ -5,7 +5,7 @@
 #   - boot.img / profile JSON 通过手动传入的 URL 下载
 #   - 构建产物通过 upload-artifact 提交下载
 # ============================================================
-name: Build CVE-2026-43499 preload2.so
+name: Build CVE-2026-43499 preload3.so
 
 on:
   workflow_dispatch:
