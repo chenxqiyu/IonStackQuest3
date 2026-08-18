@@ -1,8 +1,9 @@
 # ============================================================
 # Build CVE-2026-43499 PoC (trigger) via GitHub Actions
 # Repo: https://github.com/MobiusM/CVE-2026-43499
-# Build: CMake + Android NDK 27 (CMakeLists.txt hardcodes
-#        $HOME/Library/Android/sdk/ndk/27.0.12077973)
+# Build: CMake + Android NDK 27
+#   - Builds BOTH arm64-v8a AND armeabi-v7a (matrix)
+#   - Target API level is configurable
 # ============================================================
 name: Build CVE-2026-43499 PoC
 
@@ -13,6 +14,10 @@ on:
         description: 'Android NDK version (27.0.12077973 = r27)'
         required: false
         default: '27.0.12077973'
+      api_level:
+        description: 'Target Android API level (e.g. 26, 31, 34)'
+        required: false
+        default: '26'
   push:
     branches:
       - main
@@ -20,7 +25,11 @@ on:
 jobs:
   build-poc:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        abi: [arm64-v8a, armeabi-v7a]
 
     steps:
       # ============================================================
@@ -38,7 +47,6 @@ jobs:
         run: |
           cmake --version | head -1
           ninja --version
-          gcc --version | head -1
 
       # ============================================================
       # Download Android NDK r27 from dl.google.com
@@ -86,41 +94,59 @@ jobs:
           ls -la "$NDK_PATH/build/cmake/android.toolchain.cmake"
 
       # ============================================================
+      # Patch CMakeLists.txt for this matrix cell:
+      #   - ANDROID_ABI      -> matrix.abi
+      #   - ANDROID_PLATFORM -> android-<inputs.api_level>
+      # ============================================================
+      - name: Patch CMakeLists.txt (ABI + API level)
+        run: |
+          echo "[*] Patching ANDROID_ABI  -> ${{ matrix.abi }}"
+          sed -i "s/arm64-v8a/${{ matrix.abi }}/" CMakeLists.txt
+
+          echo "[*] Patching ANDROID_PLATFORM -> android-${{ inputs.api_level }}"
+          sed -i "s/android-[0-9]*/android-${{ inputs.api_level }}/" CMakeLists.txt
+
+          echo "[*] Patched CMakeLists.txt:"
+          grep -E "ANDROID_ABI|ANDROID_PLATFORM" CMakeLists.txt
+
+      # ============================================================
       # Configure + build with CMake/Ninja
       # ============================================================
       - name: Build PoC binary
         run: |
-          echo "[*] Configuring..."
-          cmake -B build -G Ninja
+          echo "[*] Configuring (${{ matrix.abi }}, android-${{ inputs.api_level }})..."
+          cmake -B build-${{ matrix.abi }} -G Ninja
 
           echo "[*] Building..."
-          cmake --build build
+          cmake --build build-${{ matrix.abi }}
 
-          if [ ! -f build/trigger ]; then
+          if [ ! -f build-${{ matrix.abi }}/trigger ]; then
             echo "[!] Build failed - no output binary"
             exit 1
           fi
 
           echo "[*] Output binary:"
-          file build/trigger
-          ls -lh build/trigger
+          file build-${{ matrix.abi }}/trigger
+          ls -lh build-${{ matrix.abi }}/trigger
 
-          # Sanity check: verify it is an ELF for arm64
-          readelf -h build/trigger | grep -E "Class|Machine" || true
+          # Sanity check: verify it is an ELF for the right arch
+          readelf -h build-${{ matrix.abi }}/trigger | grep -E "Class|Machine" || true
 
       # ============================================================
-      # Upload the binary as a build artifact
+      # Upload the binary as a build artifact (per ABI)
       # ============================================================
       - name: Upload PoC binary
         uses: actions/upload-artifact@v4
         with:
-          name: cve-2026-43499-trigger-arm64
-          path: build/trigger
+          name: cve-2026-43499-trigger-${{ matrix.abi }}
+          path: build-${{ matrix.abi }}/trigger
 
       # ============================================================
-      # Also upload source for convenience
+      # Upload source bundle (only from the first matrix cell
+      # to avoid duplicate artifacts)
       # ============================================================
       - name: Upload source bundle
+        if: matrix.abi == 'arm64-v8a'
         uses: actions/upload-artifact@v4
         with:
           name: cve-2026-43499-src
