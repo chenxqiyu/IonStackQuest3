@@ -1,0 +1,169 @@
+# ============================================================
+# Build CVE-2026-43499 preload.so via GitHub Actions
+# 参考: chenxqiyu/IonStackQuest3 .github/workflows/CVE-2025-21479.yml
+#   - workflow_dispatch 手动传入参数
+#   - boot.img / profile JSON 通过手动传入的 URL 下载
+#   - 构建产物通过 upload-artifact 提交下载
+# ============================================================
+name: Build CVE-2026-43499 preload.so
+
+on:
+  workflow_dispatch:
+    inputs:
+      boot_url:
+        description: 'boot.img 直链下载地址 (http/https, 自动跟随跳转)'
+        required: true
+      profile_url:
+        description: 'profile JSON 直链下载地址 (须含 p0_phys_offset / p0_kernel_phys_load 两字段)'
+        required: true
+      poc_repo:
+        description: 'CVE-2026-43499 PoC 仓库 (owner/repo)'
+        required: false
+        default: 'xianwan1314/CVE-2026-43499-Poc-Analysis'
+      poc_ref:
+        description: 'PoC 仓库分支/标签'
+        required: false
+        default: 'main'
+      ndk_release:
+        description: 'Android NDK 版本 (dl.google.com/android/repository 目录名)'
+        required: false
+        default: 'r29'
+      api_level:
+        description: 'Android API level (编译 target)'
+        required: false
+        default: '35'
+
+jobs:
+  build-preload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      # ============================================================
+      # Checkout 只需要 source/ 与 generate_target.py (sparse)
+      # ============================================================
+      - name: Checkout PoC repo (sparse)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.poc_repo }}
+          ref: ${{ inputs.poc_ref }}
+          sparse-checkout: |
+            source
+            generate_target.py
+
+      # ============================================================
+      # 手动传入 URL -> 下载 boot.img
+      # ============================================================
+      - name: Download boot.img from input URL
+        run: |
+          echo "[*] Downloading boot.img ..."
+          curl -fL --retry 3 --connect-timeout 30 -o boot.img "${{ inputs.boot_url }}"
+          ls -lh boot.img
+          echo "[*] boot.img header:"
+          xxd -l 8 boot.img
+          # 校验 Android boot magic
+          if [ "$(xxd -p -l 8 boot.img)" != "414e44524f494421" ]; then
+            echo "[!] Not an Android boot image (missing ANDROID! magic)"
+            exit 1
+          fi
+          sha256sum boot.img | tee boot.img.sha256
+
+      # ============================================================
+      # 手动传入 URL -> 下载 profile JSON 并校验字段
+      # ============================================================
+      - name: Download profile JSON from input URL
+        run: |
+          echo "[*] Downloading profile json ..."
+          curl -fL --retry 3 --connect-timeout 30 -o profile.json "${{ inputs.profile_url }}"
+          echo "[*] profile content:"
+          cat profile.json
+          python3 - <<'EOF'
+          import json, sys
+          d = json.load(open('profile.json'))
+          need = {'p0_phys_offset', 'p0_kernel_phys_load'}
+          assert set(d) == need, f'profile fields mismatch: {set(d)} != {need}'
+          for k, v in d.items():
+              int(v, 0)  # 必须是合法整数(十进制或0x)
+          print('[OK] profile fields:', d)
+          EOF
+
+      # ============================================================
+      # 安装 llvm-objdump (generate_target.py 反汇编内核用)
+      # ============================================================
+      - name: Install llvm-objdump
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q llvm
+          OBJDUMP=$(ls /usr/bin/llvm-objdump-* 2>/dev/null | head -1)
+          [ -z "$OBJDUMP" ] && OBJDUMP=$(command -v llvm-objdump || true)
+          if [ -z "$OBJDUMP" ]; then echo "[!] llvm-objdump not found"; exit 1; fi
+          sudo ln -sf "$OBJDUMP" /usr/local/bin/llvm-objdump
+          llvm-objdump --version | head -2
+
+      # ============================================================
+      # Android NDK (Makefile 需要 aarch64-linux-android<api>-clang)
+      # ============================================================
+      - name: Cache Android NDK
+        id: cache-ndk
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/ndk
+          key: ndk-${{ inputs.ndk_release }}-${{ runner.os }}
+
+      - name: Download Android NDK
+        if: steps.cache-ndk.outputs.cache-hit != 'true'
+        run: |
+          NDK_NAME="android-ndk-${{ inputs.ndk_release }}"
+          echo "[*] Downloading $NDK_NAME ..."
+          wget -nv -O "$NDK_NAME-linux.zip" \
+            "https://dl.google.com/android/repository/$NDK_NAME-linux.zip"
+          echo "[*] Extracting ..."
+          unzip -q "$NDK_NAME-linux.zip" -d "$GITHUB_WORKSPACE/ndk"
+          rm -f "$NDK_NAME-linux.zip"
+          echo "ANDROID_NDK_HOME=$GITHUB_WORKSPACE/ndk/$NDK_NAME" >> "$GITHUB_ENV"
+
+      - name: Verify NDK toolchain
+        run: |
+          echo "ANDROID_NDK_HOME=${ANDROID_NDK_HOME:-$GITHUB_WORKSPACE/ndk/android-ndk-${{ inputs.ndk_release }}}"
+          ls "$GITHUB_WORKSPACE/ndk/android-ndk-${{ inputs.ndk_release }}/toolchains/llvm/prebuilt/linux-x86_64/bin/" \
+            | grep -E "aarch64-linux-android.*clang$" | head -5
+
+      # ============================================================
+      # 生成 target.h
+      # ============================================================
+      - name: Generate target.h
+        run: |
+          export ANDROID_NDK_HOME="${ANDROID_NDK_HOME:-$GITHUB_WORKSPACE/ndk/android-ndk-${{ inputs.ndk_release }}}"
+          python3 generate_target.py \
+            --boot boot.img \
+            --profile profile.json \
+            -o source/src/target.h \
+            --llvm-objdump "$(command -v llvm-objdump)"
+          echo "[*] target.h generated:"
+          head -30 source/src/target.h
+
+      # ============================================================
+      # 编译 preload.so
+      # ============================================================
+      - name: Build preload.so
+        run: |
+          export ANDROID_NDK_HOME="${ANDROID_NDK_HOME:-$GITHUB_WORKSPACE/ndk/android-ndk-${{ inputs.ndk_release }}}"
+          make -C source clean preload API=${{ inputs.api_level }}
+          echo "[*] output:"
+          ls -lh source/build/bin/preload.so
+          file source/build/bin/preload.so
+          sha256sum source/build/bin/preload.so | tee preload.so.sha256
+
+      # ============================================================
+      # 提交下载功能: 上传构建产物 (Actions 页面可直接下载)
+      # ============================================================
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cve-2026-43499-preload-${{ github.run_number }}
+          path: |
+            source/build/bin/preload.so
+            source/src/target.h
+            profile.json
+            boot.img.sha256
+            preload.so.sha256
