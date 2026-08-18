@@ -276,6 +276,32 @@ gt.BTFInfo.field = _patched_btf_field
 gt.BTFInfo.direct_field_size = _patched_btf_dfs
 
 
+# ============================================================
+# Fix: p0_page_offset 必须包含 p0_phys_offset
+#
+# P0_DATA_ALIAS_CONST(image_addr) = P0_PAGE_OFFSET | (RVA + DELTA)
+# 正确的线性映射地址 = PAGE_OFFSET + PHYS_OFFSET + RVA + DELTA
+# 所以 P0_PAGE_OFFSET 必须 = PAGE_OFFSET + PHYS_OFFSET
+#
+# 原始 complete_profile 只计算了标准 PAGE_OFFSET，缺少 PHYS_OFFSET。
+# 在 phys_offset != 0 的平台（如高通 SM8650 的 0x80000000）上，
+# 所有 SLIDE_* data alias 地址都会偏移 phys_offset，导致内核 panic。
+# ============================================================
+_orig_complete_profile = gt.complete_profile
+
+def _patched_complete_profile(profile, config, image_size):
+    result = _orig_complete_profile(profile, config, image_size)
+    phys = int(profile["p0_phys_offset"], 0) if isinstance(profile["p0_phys_offset"], str) else profile["p0_phys_offset"]
+    if phys:
+        old = result["p0_page_offset"]
+        result["p0_page_offset"] = (old + phys) & ((1 << 64) - 1)
+        print(f"  patched p0_page_offset: 0x{old:x} -> 0x{result['p0_page_offset']:x} "
+              f"(added phys_offset 0x{phys:x})", file=sys.stderr)
+    return result
+
+gt.complete_profile = _patched_complete_profile
+
+
 # Patch
 gt.recover_kallsyms = patched_recover_kallsyms
 
