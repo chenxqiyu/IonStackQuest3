@@ -234,33 +234,42 @@ def patched_recover_kallsyms(data, kernel_size, image_size):
 
 
 # ============================================================
-# BTF fallback: Linux 6.1 没有 rt_waiter_node 子结构体，
-# prio/deadline 直接在 rt_mutex_waiter 中。
-# 当 btf.field("rt_waiter_node", X) 失败时，自动回退为
-# btf.field("rt_mutex_waiter", X) - btf.field("rt_mutex_waiter", "tree")
+# BTF fallback: Linux 6.1 与 6.2+ 的 rt_mutex_waiter 差异：
+# 1. 字段名：6.1 用 tree_entry/pi_tree_entry，6.2+ 用 tree/pi_tree
+# 2. 子结构体：6.1 无 rt_waiter_node，prio/deadline 直接在 rt_mutex_waiter 中
 # ============================================================
 _orig_btf_field = gt.BTFInfo.field
 _orig_btf_dfs = gt.BTFInfo.direct_field_size
 
+# 字段名映射：6.2+ 名字 -> 6.1 实际名字
+_BTF_FIELD_MAP = {
+    ("rt_mutex_waiter", "tree"): "tree_entry",
+    ("rt_mutex_waiter", "pi_tree"): "pi_tree_entry",
+}
+
 def _patched_btf_field(self, struct_name, field_name):
+    mapped = _BTF_FIELD_MAP.get((struct_name, field_name), field_name)
     try:
-        return _orig_btf_field(self, struct_name, field_name)
+        return _orig_btf_field(self, struct_name, mapped)
     except gt.GenerationError:
         if struct_name == "rt_waiter_node":
-            base_off = _orig_btf_field(self, "rt_mutex_waiter", "tree")
-            field_off = _orig_btf_field(self, "rt_mutex_waiter", field_name)
+            # 6.1 fallback: prio/deadline 直接在 rt_mutex_waiter 中
+            # rt_waiter_node.X = rt_mutex_waiter.X - rt_mutex_waiter.tree_entry
+            tree_off = _patched_btf_field(self, "rt_mutex_waiter", "tree")
+            field_off = _patched_btf_field(self, "rt_mutex_waiter", field_name)
             print(f"  BTF fallback: rt_waiter_node.{field_name} -> "
-                  f"rt_mutex_waiter.{field_name}({field_off}) - tree({base_off}) = {field_off - base_off}",
+                  f"rt_mutex_waiter.{field_name}({field_off}) - tree({tree_off}) = {field_off - tree_off}",
                   file=sys.stderr)
-            return field_off - base_off
+            return field_off - tree_off
         raise
 
 def _patched_btf_dfs(self, struct_name, field_name):
+    mapped = _BTF_FIELD_MAP.get((struct_name, field_name), field_name)
     try:
-        return _orig_btf_dfs(self, struct_name, field_name)
+        return _orig_btf_dfs(self, struct_name, mapped)
     except gt.GenerationError:
         if struct_name == "rt_waiter_node":
-            return _orig_btf_dfs(self, "rt_mutex_waiter", field_name)
+            return _patched_btf_dfs(self, "rt_mutex_waiter", field_name)
         raise
 
 gt.BTFInfo.field = _patched_btf_field
