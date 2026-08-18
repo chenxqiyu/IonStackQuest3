@@ -164,49 +164,77 @@ jobs:
           path = "source/src/slide.c"
           with open(path, "r") as f:
               src = f.read()
-          old_block = """  struct slide_waiter_word words[] = {
-            {0, shift, SLIDE_LOGGERS_0_1, "tree_pc"},
-            {1, shift, 0, "tree_right"},
-            {2, shift, SLIDE_RANDOM_BOOT_ID_DATA, "tree_left"},
-            {3, shift, FAKE_WAITER_PRIO, "tree_prio"},
-            {4, shift, 0, "tree_deadline"},
-            {5, shift, SLIDE_LOGGERS_0_1, "pi_parent"},
-            {6, shift, 0, "pi_right"},
-            {7, shift, SLIDE_RANDOM_BOOT_ID_DATA, "pi_left"},
-            {8, shift, FAKE_WAITER_PRIO, "pi_prio"},
-            {9, shift, 0, "pi_deadline"},
-            {10, shift, SLIDE_INIT_TASK, "task"},
-            {11, shift, fake_lock, "lock"},
-            {12, shift, 3, "wake_state"},
-          };"""
-          new_block = """  struct slide_waiter_word words[] = {
-            {0, shift, SLIDE_LOGGERS_0_1, "tree_pc"},
-            {1, shift, 0, "tree_right"},
-            {2, shift, SLIDE_RANDOM_BOOT_ID_DATA, "tree_left"},
-            {3, shift, SLIDE_LOGGERS_0_1, "pi_parent"},
-            {4, shift, 0, "pi_right"},
-            {5, shift, SLIDE_RANDOM_BOOT_ID_DATA, "pi_left"},
-            {6, shift, SLIDE_INIT_TASK, "task"},
-            {7, shift, fake_lock, "lock"},
-            {8, shift, 3 | ((uint64_t)FAKE_WAITER_PRIO << 32), "wake_state+prio"},
-            {9, shift, 0, "deadline"},
-            {10, shift, 0, "ww_ctx"},
-          };"""
+          old_block = """  struct slide_waiter_word {
+    int word;
+    int shift;
+    uint64_t value;
+    const char *name;
+  } words[] = {
+    {0, shift, SLIDE_LOGGERS_0_1, "tree_pc"},
+    {1, shift, 0, "tree_right"},
+    {2, shift, SLIDE_RANDOM_BOOT_ID_DATA, "tree_left"},
+    {3, shift, FAKE_WAITER_PRIO, "tree_prio"},
+    {4, shift, 0, "tree_deadline"},
+    {5, shift, SLIDE_LOGGERS_0_1, "pi_parent"},
+    {6, shift, 0, "pi_right"},
+    {7, shift, SLIDE_RANDOM_BOOT_ID_DATA, "pi_left"},
+    {8, shift, FAKE_WAITER_PRIO, "pi_prio"},
+    {9, shift, 0, "pi_deadline"},
+    {10, shift, SLIDE_INIT_TASK, "task"},
+    {11, shift, fake_lock, "lock"},
+    {12, shift, 3, "wake_state"},
+  };"""
+          new_block = """  struct slide_waiter_word {
+    int word;
+    int shift;
+    uint64_t value;
+    const char *name;
+  } words[] = {
+    {0, shift, SLIDE_LOGGERS_0_1, "tree_pc"},
+    {1, shift, 0, "tree_right"},
+    {2, shift, SLIDE_RANDOM_BOOT_ID_DATA, "tree_left"},
+    {3, shift, SLIDE_LOGGERS_0_1, "pi_parent"},
+    {4, shift, 0, "pi_right"},
+    {5, shift, SLIDE_RANDOM_BOOT_ID_DATA, "pi_left"},
+    {6, shift, SLIDE_INIT_TASK, "task"},
+    {7, shift, fake_lock, "lock"},
+    {8, shift, 3 | ((uint64_t)FAKE_WAITER_PRIO << 32), "wake_state+prio"},
+    {9, shift, 0, "deadline"},
+    {10, shift, 0, "ww_ctx"},
+  };"""
           if old_block in src:
               src = src.replace(old_block, new_block)
               with open(path, "w") as f:
                   f.write(src)
               print("[+] Patched slide.c: 13-word 6.2+ -> 11-word 6.1 layout")
-          elif new_block in src:
+          elif "wake_state+prio" in src:
               print("[*] slide.c already patched for 6.1")
           else:
-              print("[!] words[] block not found - trying fuzzy match")
-              pattern = r'struct slide_waiter_word words\[\]\s*=\s*\{[^}]+\};'
+              print("[!] Exact match failed, trying regex fallback...")
+              # fallback: replace everything between "} words[] = {" and "};"
+              pattern = r'(\}\s*words\[\]\s*=\s*\{)(.*?)(\};)'
               m = re.search(pattern, src, re.DOTALL)
               if m:
-                  print("[!] Found block:")
-                  print(m.group()[:600])
-              sys.exit(1)
+                  new_arr = """
+    {0, shift, SLIDE_LOGGERS_0_1, "tree_pc"},
+    {1, shift, 0, "tree_right"},
+    {2, shift, SLIDE_RANDOM_BOOT_ID_DATA, "tree_left"},
+    {3, shift, SLIDE_LOGGERS_0_1, "pi_parent"},
+    {4, shift, 0, "pi_right"},
+    {5, shift, SLIDE_RANDOM_BOOT_ID_DATA, "pi_left"},
+    {6, shift, SLIDE_INIT_TASK, "task"},
+    {7, shift, fake_lock, "lock"},
+    {8, shift, 3 | ((uint64_t)FAKE_WAITER_PRIO << 32), "wake_state+prio"},
+    {9, shift, 0, "deadline"},
+    {10, shift, 0, "ww_ctx"},
+  """
+                  src = src[:m.start(2)] + new_arr + src[m.end(2):]
+                  with open(path, "w") as f:
+                      f.write(src)
+                  print("[+] Patched slide.c via regex fallback")
+              else:
+                  print("[!] FATAL: could not find words[] block")
+                  sys.exit(1)
           PATCH_EOF
 
       # ============================================================
