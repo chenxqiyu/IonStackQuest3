@@ -1,0 +1,130 @@
+# ============================================================
+# Build CVE-2026-43499 PoC (trigger) via GitHub Actions
+# Repo: https://github.com/MobiusM/CVE-2026-43499
+# Build: CMake + Android NDK 27 (CMakeLists.txt hardcodes
+#        $HOME/Library/Android/sdk/ndk/27.0.12077973)
+# ============================================================
+name: Build CVE-2026-43499 PoC
+
+on:
+  workflow_dispatch:
+    inputs:
+      ndk_version:
+        description: 'Android NDK version (27.0.12077973 = r27)'
+        required: false
+        default: '27.0.12077973'
+  push:
+    branches:
+      - main
+
+jobs:
+  build-poc:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      # ============================================================
+      # Clone the PoC repo
+      # ============================================================
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          repository: MobiusM/CVE-2026-43499
+
+      # ============================================================
+      # Verify build tools (ubuntu-latest ships cmake + ninja)
+      # ============================================================
+      - name: Verify build tools
+        run: |
+          cmake --version | head -1
+          ninja --version
+          gcc --version | head -1
+
+      # ============================================================
+      # Download Android NDK r27 from dl.google.com
+      # ============================================================
+      - name: Download Android NDK
+        run: |
+          NDK_VER="${{ inputs.ndk_version }}"
+          case "$NDK_VER" in
+            27.0.12077973) NDK_NAME="android-ndk-r27" ;;
+            27.1.12297006) NDK_NAME="android-ndk-r27a" ;;
+            27.2.12479018) NDK_NAME="android-ndk-r27c" ;;
+            *)
+              echo "[!] Unsupported NDK version: $NDK_VER"
+              echo "[!] Supported: 27.0.12077973, 27.1.12297006, 27.2.12479018"
+              exit 1
+              ;;
+          esac
+
+          echo "[*] Downloading NDK $NDK_VER ($NDK_NAME)..."
+          wget -nv -O "$NDK_NAME-linux.zip" \
+            "https://dl.google.com/android/repository/$NDK_NAME-linux.zip"
+
+          echo "[*] Extracting..."
+          unzip -q "$NDK_NAME-linux.zip" -d "$GITHUB_WORKSPACE/ndk"
+
+          echo "NDK_HOME=$GITHUB_WORKSPACE/ndk/$NDK_NAME" >> "$GITHUB_ENV"
+
+          # Free disk space
+          rm -f "$NDK_NAME-linux.zip"
+
+      # ============================================================
+      # CMakeLists.txt hardcodes the NDK path as
+      #   $HOME/Library/Android/sdk/ndk/27.0.12077973
+      # (macOS-style, with FORCE in set() so it cannot be
+      #  overridden via -DCMAKE_TOOLCHAIN_FILE on the CLI).
+      # Trick: create that exact directory and symlink the NDK
+      # into it, so the existing CMakeLists.txt works unmodified.
+      # ============================================================
+      - name: Fake macOS NDK path (symlink)
+        run: |
+          NDK_PATH="$HOME/Library/Android/sdk/ndk/27.0.12077973"
+          echo "[*] Creating $NDK_PATH -> $NDK_HOME"
+          mkdir -p "$HOME/Library/Android/sdk/ndk"
+          ln -s "$NDK_HOME" "$NDK_PATH"
+          ls -la "$NDK_PATH/build/cmake/android.toolchain.cmake"
+
+      # ============================================================
+      # Configure + build with CMake/Ninja
+      # ============================================================
+      - name: Build PoC binary
+        run: |
+          echo "[*] Configuring..."
+          cmake -B build -G Ninja
+
+          echo "[*] Building..."
+          cmake --build build
+
+          if [ ! -f build/trigger ]; then
+            echo "[!] Build failed - no output binary"
+            exit 1
+          fi
+
+          echo "[*] Output binary:"
+          file build/trigger
+          ls -lh build/trigger
+
+          # Sanity check: verify it is an ELF for arm64
+          readelf -h build/trigger | grep -E "Class|Machine" || true
+
+      # ============================================================
+      # Upload the binary as a build artifact
+      # ============================================================
+      - name: Upload PoC binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: cve-2026-43499-trigger-arm64
+          path: build/trigger
+
+      # ============================================================
+      # Also upload source for convenience
+      # ============================================================
+      - name: Upload source bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: cve-2026-43499-src
+          path: |
+            trigger.c
+            CMakeLists.txt
+            README.md
