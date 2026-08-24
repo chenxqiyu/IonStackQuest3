@@ -1,6 +1,8 @@
 ```
 禁用com.oculus.updater
 
+adb shell pm disable-user --user 0 com.oculus.updater
+
 adb reboot bootloader
 
 sideload update
