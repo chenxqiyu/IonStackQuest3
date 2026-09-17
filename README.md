@@ -1,8 +1,13 @@
 ```
 禁用com.oculus.updater
-
 adb shell pm disable-user --user 0 com.oculus.updater
-
+```
+```
+adb shell dumpsys package com.oculus.updater | Select-String -Pattern "enabled=|userId="
+enabled=2 → 已针对当前用户(0)禁用 ✅
+enabled=0 → 仍然启用 ❌
+```
+```
 adb reboot bootloader
 
 sideload update
@@ -15,7 +20,7 @@ root成功
 ```
 
 ```
-adb shell getprop | grep -E "ro.build.version|ro.product.model"
+adb shell getprop | Select-String -Pattern "ro.build.version|ro.product.model"
 [ro.build.version.all_codenames]: [REL]
 [ro.build.version.base_os]: []
 [ro.build.version.codename]: [REL]
